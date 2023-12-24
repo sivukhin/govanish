@@ -16,32 +16,11 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-type E struct{ Desc string }
-
-func (e *E) Error() string { return e.Desc }
-func api(n int) *E {
-	if n == 0 {
-		return nil
-	}
-	return &E{Desc: "error"}
-}
-
-func use(n int) {
-	var err error = api(n)
-	if err != nil {
-		panic("this is impossible")
-	}
-	panic(fmt.Sprintf("this is possible: %v", err))
-}
-
 var simpleBuiltins = []string{
-	"make",
 	"cap",
 	"len",
 	"complex",
 	"imag",
-	"max",
-	"min",
 	"real",
 	"bool",
 	"byte",
@@ -65,32 +44,33 @@ var simpleBuiltins = []string{
 }
 
 func checkNodeComplexity(node ast.Node) bool {
-	isComplex := false
+	complexFlow := false
+	operations := 0
 	ast.Inspect(node, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.ReturnStmt, *ast.ForStmt, *ast.RangeStmt, *ast.DeferStmt:
-			isComplex = true
+			complexFlow = true
 		case *ast.CallExpr:
 			if ident, ok := n.Fun.(*ast.Ident); ok {
-				isComplex = isComplex || !slices.Contains(simpleBuiltins, ident.Name)
+				complexFlow = complexFlow || !slices.Contains(simpleBuiltins, ident.Name)
 			} else {
-				isComplex = false
+				complexFlow = true
 			}
-		case *ast.BinaryExpr:
-			isComplex = isComplex || n.Op == token.ARROW
+		case *ast.UnaryExpr, *ast.BinaryExpr, *ast.IndexExpr, *ast.SliceExpr, *ast.StarExpr:
+			operations += 1
 		}
 		return true
 	})
-	return isComplex
+	return complexFlow || operations >= 8
 }
 
 func reportIfVanished(
 	fset *token.FileSet,
 	assemblyLines map[string][]int,
 	currentFunc string,
-	start, end token.Pos,
+	start, end ast.Node,
 ) bool {
-	startPosition, endPosition := fset.Position(start), fset.Position(end)
+	startPosition, endPosition := fset.Position(start.Pos()), fset.Position(end.End())
 	lines, ok := assemblyLines[startPosition.Filename]
 	if !ok {
 		return false
@@ -99,7 +79,18 @@ func reportIfVanished(
 	if index < len(lines) && lines[index] <= endPosition.Line {
 		return false
 	}
-	log.Printf("it seems like your code vanished from compiled binary: func=[%v], file=[%v], line=[%v]", currentFunc, startPosition.Filename, startPosition.Line)
+	snippet := ""
+	f, err := os.OpenFile(startPosition.Filename, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+	startLineEndPosition := fset.Position(start.End())
+	_, _ = f.Seek(int64(startPosition.Offset), 0)
+	buffer := make([]byte, startLineEndPosition.Offset-startPosition.Offset)
+	_, _ = f.Read(buffer)
+	snippet = string(buffer)
+
+	log.Printf("it seems like your code vanished from compiled binary: func=[%v], file=[%v], line=[%v], snippet:\n\t%v", currentFunc, startPosition.Filename, startPosition.Line, snippet)
 	return true
 }
 
@@ -142,6 +133,25 @@ func isPivot(node ast.Node) (body *ast.BlockStmt, ok bool) {
 	return nil, false
 }
 
+func equalExprs(a, b ast.Expr) bool {
+	aIdent, aOk := a.(*ast.Ident)
+	bIdent, bOk := b.(*ast.Ident)
+	if aOk && bOk {
+		return aIdent.Name == bIdent.Name
+	}
+	aSelector, aOk := a.(*ast.SelectorExpr)
+	bSelector, bOk := b.(*ast.SelectorExpr)
+	if aOk && bOk {
+		return aSelector.Sel.Name == bSelector.Sel.Name && equalExprs(aSelector.X, bSelector.X)
+	}
+	aStar, aOk := a.(*ast.StarExpr)
+	bStar, bOk := b.(*ast.StarExpr)
+	if aOk && bOk {
+		return equalExprs(aStar.X, bStar.X)
+	}
+	return false
+}
+
 func main() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -175,7 +185,7 @@ func main() {
 		}
 		fileRef := line[cwdIndex : cwdIndex+fileRefEnd]
 		lineRef := line[cwdIndex+fileRefEnd+1 : cwdIndex+lineRefEnd-1]
-		lineNumber, err := strconv.Atoi(lineRef)
+		lineNumber, err := strconv.Atoi(strings.Trim(lineRef, ")]"))
 		if err != nil {
 			panic(fmt.Errorf("unexpected line structure: %v, err=%w", line, err))
 		}
@@ -194,8 +204,8 @@ func main() {
 	}
 	log.Printf("assembly information were prepared, ready to process AST")
 	cfg := &packages.Config{
-		Mode:  packages.NeedSyntax | packages.NeedFiles | packages.NeedTypes,
-		Tests: true,
+		Mode:  packages.NeedSyntax | packages.NeedFiles | packages.NeedTypes | packages.NeedTypesInfo,
+		Tests: false,
 	}
 
 	project, err := packages.Load(cfg, "./...")
@@ -204,7 +214,7 @@ func main() {
 	}
 	for _, pkg := range project {
 		for _, file := range pkg.Syntax {
-			if strings.Contains(pkg.Fset.Position(file.Pos()).Filename, "generated") {
+			if ast.IsGenerated(file) {
 				continue
 			}
 			var currentFunc string
@@ -212,11 +222,12 @@ func main() {
 
 			analyze = func(node ast.Node) bool {
 				if funcDecl, ok := node.(*ast.FuncDecl); ok {
-					if isGenericFunc(funcDecl) {
-						return false
-					}
 					currentFunc = funcDecl.Name.Name
-					return true
+					// don't process body of generic functions because code for them emitted
+					return !isGenericFunc(funcDecl)
+				}
+				if recognizeSafePattern(node, pkg.TypesInfo) {
+					return false
 				}
 				if _, pivot := isPivot(node); pivot {
 					return true
@@ -230,18 +241,18 @@ func main() {
 					pivot := false
 					if i == len(blockStmt.List) {
 						pivot = true
-					} else {
-						switch blockStmt.List[i].(type) {
-						case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.BlockStmt:
-							pivot = true
-						}
+					} else if _, ok := isPivot(blockStmt.List[i]); ok {
+						pivot = true
+					} else if recognizeSafePattern(blockStmt.List[i], pkg.TypesInfo) {
+						pivot = true
 					}
-					if pivot {
-						if checkNodeComplexity(&ast.BlockStmt{List: blockStmt.List[previous+1 : i]}) {
-							reportIfVanished(pkg.Fset, assemblyLines, currentFunc, blockStmt.List[previous+1].Pos(), blockStmt.List[i-1].End())
-						}
-						previous = i
+					if !pivot {
+						continue
 					}
+					if checkNodeComplexity(&ast.BlockStmt{List: blockStmt.List[previous+1 : i]}) {
+						reportIfVanished(pkg.Fset, assemblyLines, currentFunc, blockStmt.List[previous+1], blockStmt.List[i-1])
+					}
+					previous = i
 				}
 				return true
 			}
