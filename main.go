@@ -3,18 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 )
 
 func main() {
-	v := uint32(math.MaxUint32)
-	u := int(0)
-	if uint32(int(v)) == v {
-		u = int(v)
-	}
-	log.Printf("%v", u)
 	var analysisPath string
 	if len(os.Args) == 2 {
 		var err error
