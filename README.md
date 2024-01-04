@@ -9,15 +9,15 @@ However, removal of some parts of the code can actually be a sign of a subtle bu
 For example, consider following snippet:
 ```go
 func handle() error {
-	fErr := F()
-	if fErr != nil {
+    fErr := F()
+    if fErr != nil {
         return fErr
     }
-	gErr := G()
-	if fErr != nil {
-	    return gErr	
+    gErr := G()
+    if fErr != nil {
+        return gErr    
     }
-	return nil
+    return nil
 }
 ```
 
@@ -53,5 +53,5 @@ $> govanish projects/go/cache # projects/go/cache/ is a module root and has go.m
 2024/01/04 19:59:59 ready to normalize assembly lines (size 271)
 2024/01/04 19:59:59 ready to analyze module AST
 2024/01/04 20:00:04 it seems like your code vanished from compiled binary: func=[Create], file=[/home/sivukhin/projects/go/cache/api/controller.go], line=[58], snippet:
-	return dto.SaveResponse{}, apiErr
+    return dto.SaveResponse{}, apiErr
 ```
