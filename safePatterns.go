@@ -14,6 +14,9 @@ func RecognizeSafeDeclaration(pkg *packages.Package, node ast.Node) bool {
 		return false
 	}
 	genDecl := declStmt.Decl.(*ast.GenDecl)
+	if genDecl.Tok == token.CONST {
+		return true
+	}
 	if genDecl.Tok != token.VAR {
 		return false
 	}
@@ -59,25 +62,34 @@ var SimpleStructs = NewSet("context.Background")
 
 func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
 	// recognize type constructors (like a := T(b) where type T int64) or common structs with simple fields which efficiently inlined by compiler and legally vanished from assembly
-	if callExpr, ok := rhs.(*ast.CallExpr); ok {
-		selector, _ := DeconstructSelector(callExpr.Fun)
-		if SimpleStructs.Has(selector) {
+	callExpr, ok := rhs.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	if parenExpr, ok := callExpr.Fun.(*ast.ParenExpr); ok {
+		// recognize cast of pointers
+		if _, ok := parenExpr.X.(*ast.StarExpr); ok {
 			return true
 		}
-		exprTypeInfo := pkg.TypesInfo.Types[callExpr.Fun].Type
-		if exprTypeInfo == nil {
-			return false
-		}
-		typeString := exprTypeInfo.String()
-		if typeString == selector {
-			return true
-		}
-		// simple heuristic - we detect type constructor if last token in selector matches the last selector of FQN name of the type
-		selectorTokens := strings.Split(selector, ".")
-		typeStringTokens := strings.Split(typeString, ".")
-		if typeStringTokens[len(typeStringTokens)-1] == selectorTokens[len(selectorTokens)-1] {
-			return true
-		}
+		return false
+	}
+	selector, _ := DeconstructSelector(callExpr.Fun)
+	if SimpleStructs.Has(selector) {
+		return true
+	}
+	exprTypeInfo := pkg.TypesInfo.Types[callExpr.Fun].Type
+	if exprTypeInfo == nil {
+		return false
+	}
+	typeString := exprTypeInfo.String()
+	if typeString == selector {
+		return true
+	}
+	// simple heuristic - we detect type constructor if last token in selector matches the last selector of FQN name of the type
+	selectorTokens := strings.Split(selector, ".")
+	typeStringTokens := strings.Split(typeString, ".")
+	if typeStringTokens[len(typeStringTokens)-1] == selectorTokens[len(selectorTokens)-1] {
+		return true
 	}
 	return false
 }
@@ -114,7 +126,7 @@ func RecognizeConstantFalse(pkg *packages.Package, node ast.Expr) bool {
 	return binExpr.Op == token.LAND && (RecognizeConstantFalse(pkg, binExpr.X) || RecognizeConstantFalse(pkg, binExpr.Y))
 }
 
-var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator")
+var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator", "filepath.ToSlash")
 
 func RecognizePlatformDependentCode(node ast.Node) bool {
 	// ignore functions with platform dependent code inside

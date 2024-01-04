@@ -179,4 +179,16 @@ func TestAnalysis(t *testing.T) {
 		vanished := analyze(t, loadExample(t))
 		require.Empty(t, vanished)
 	})
+	t.Run("const_declaration.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
+	t.Run("float_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
+	t.Run("cast_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
 }

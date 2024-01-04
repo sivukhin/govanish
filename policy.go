@@ -61,7 +61,11 @@ func (g GovanishAnalysisPolicy) CheckComplexity(node ast.Node) bool {
 			} else {
 				complexFlow = true
 			}
-		case *ast.UnaryExpr, *ast.BinaryExpr, *ast.IndexExpr, *ast.SliceExpr:
+		case *ast.UnaryExpr:
+			if _, ok := n.X.(*ast.BasicLit); !ok {
+				operations += 1
+			}
+		case *ast.BinaryExpr, *ast.IndexExpr:
 			operations += 1
 		}
 		return true
@@ -71,6 +75,7 @@ func (g GovanishAnalysisPolicy) CheckComplexity(node ast.Node) bool {
 
 func (i VanishedInfo) Filename() string { return i.Pkg.Fset.Position(i.Start.Pos()).Filename }
 func (i VanishedInfo) StartLine() int   { return i.Pkg.Fset.Position(i.Start.Pos()).Line }
+func (i VanishedInfo) EndLine() int     { return i.Pkg.Fset.Position(i.End.Pos()).Line }
 func (i VanishedInfo) StartLineOffsets() (start, end int) {
 	startPos := i.Pkg.Fset.Position(i.Start.Pos())
 	endPos := i.Pkg.Fset.Position(i.Start.End())
@@ -90,10 +95,11 @@ func (g GovanishAnalysisPolicy) ReportVanished(info VanishedInfo) {
 	snippet = string(buffer)
 
 	log.Printf(
-		"it seems like your code vanished from compiled binary: func=[%v], file=[%v], line=[%v], snippet:\n\t%v",
+		"it seems like your code vanished from compiled binary: func=[%v], file=[%v], lines=[%v-%v], snippet:\n\t%v",
 		info.FuncName,
 		info.Filename(),
 		info.StartLine(),
+		info.EndLine(),
 		snippet,
 	)
 }
