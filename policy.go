@@ -66,7 +66,7 @@ func (g GovanishAnalysisPolicy) CheckComplexity(node ast.Node) bool {
 		}
 		return true
 	})
-	return complexFlow || operations >= 8
+	return complexFlow || operations >= 2
 }
 
 func (i VanishedInfo) Filename() string { return i.Pkg.Fset.Position(i.Start.Pos()).Filename }

@@ -175,4 +175,8 @@ func TestAnalysis(t *testing.T) {
 		vanished := analyze(t, loadExample(t))
 		require.Equal(t, []simpleVanishedInfo{{Func: "LongCompute", StartLine: 19, EndLine: 19}}, vanished)
 	})
+	t.Run("cmove_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
 }

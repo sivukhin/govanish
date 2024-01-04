@@ -13,7 +13,7 @@ func LongCompute(b []int) {
 	sum := int64(0)
 	for x := 0; x < 10000; x++ {
 		for y := 0; y < 10000; y++ {
-
+			sum += int64(x + y)
 		}
 	}
 	if b[0] == 0 {
