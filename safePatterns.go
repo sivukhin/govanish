@@ -3,35 +3,12 @@ package main
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
-func deconstructSelector(node ast.Node) (string, bool) {
-	identExpr, ok := node.(*ast.Ident)
-	if ok {
-		return identExpr.Name, true
-	}
-	selectorExpr, ok := node.(*ast.SelectorExpr)
-	if !ok {
-		return "", false
-	}
-	prefix, ok := deconstructSelector(selectorExpr.X)
-	if !ok {
-		return "", false
-	}
-	return prefix + "." + selectorExpr.Sel.Name, true
-}
-
-func recognizeSafePattern(node ast.Node, typeInfo *types.Info) bool {
-	return recognizeMapClearPattern(node) ||
-		recognizePlatformDependentCode(node) ||
-		recognizeConstantIfCondition(node, typeInfo) ||
-		recognizeSafeAssignment(node, typeInfo) ||
-		recognizeSafeDeclaration(node, typeInfo)
-}
-
-func recognizeSafeDeclaration(node ast.Node, typeInfo *types.Info) bool {
+func RecognizeSafeDeclaration(pkg *packages.Package, node ast.Node) bool {
 	declStmt, ok := node.(*ast.DeclStmt)
 	if !ok {
 		return false
@@ -42,7 +19,7 @@ func recognizeSafeDeclaration(node ast.Node, typeInfo *types.Info) bool {
 	}
 	for _, spec := range genDecl.Specs {
 		for _, value := range spec.(*ast.ValueSpec).Values {
-			if !recognizeSafeDeclarationRhs(value, typeInfo) {
+			if !RecognizeSafeDeclarationRhs(pkg, value) {
 				return false
 			}
 		}
@@ -50,36 +27,44 @@ func recognizeSafeDeclaration(node ast.Node, typeInfo *types.Info) bool {
 	return true
 }
 
-func recognizeSafeAssignment(node ast.Node, typeInfo *types.Info) bool {
+func RecognizeSafeAssignment(pkg *packages.Package, node ast.Node) bool {
 	assignStmt, ok := node.(*ast.AssignStmt)
 	if !ok {
 		return false
 	}
 	for _, rhs := range assignStmt.Rhs {
-		if assignStmt.Tok == token.DEFINE && !recognizeSafeDeclarationRhs(rhs, typeInfo) {
+		if assignStmt.Tok == token.DEFINE && !RecognizeSafeDeclarationRhs(pkg, rhs) {
 			return false
 		}
-		if assignStmt.Tok != token.DEFINE && !recognizeSafeAssignmentRhs(rhs, typeInfo) {
+		if assignStmt.Tok != token.DEFINE && !RecognizeSafeAssignmentRhs(pkg, rhs) {
 			return false
 		}
 	}
 	return true
 }
 
-func recognizeSafeDeclarationRhs(rhs ast.Expr, typeInfo *types.Info) bool {
+const (
+	False = "false"
+	True  = "true"
+)
+
+func RecognizeSafeDeclarationRhs(pkg *packages.Package, rhs ast.Expr) bool {
 	if identExpr, ok := rhs.(*ast.Ident); ok {
-		return identExpr.Name == "false" || identExpr.Name == "true"
+		return identExpr.Name == False || identExpr.Name == True
 	}
-	return recognizeSafeAssignmentRhs(rhs, typeInfo)
+	return RecognizeSafeAssignmentRhs(pkg, rhs)
 }
 
-func recognizeSafeAssignmentRhs(rhs ast.Expr, typeInfo *types.Info) bool {
+var SimpleStructs = NewSet("context.Background")
+
+func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
+	// recognize type constructors (like a := T(b) where type T int64) or common structs with simple fields which efficiently inlined by compiler and legally vanished from assembly
 	if callExpr, ok := rhs.(*ast.CallExpr); ok {
-		selector, _ := deconstructSelector(callExpr.Fun)
-		if selector == "context.Background" {
+		selector, _ := DeconstructSelector(callExpr.Fun)
+		if SimpleStructs.Has(selector) {
 			return true
 		}
-		exprTypeInfo := typeInfo.Types[callExpr.Fun].Type
+		exprTypeInfo := pkg.TypesInfo.Types[callExpr.Fun].Type
 		if exprTypeInfo == nil {
 			return false
 		}
@@ -87,6 +72,7 @@ func recognizeSafeAssignmentRhs(rhs ast.Expr, typeInfo *types.Info) bool {
 		if typeString == selector {
 			return true
 		}
+		// simple heuristic - we detect type constructor if last token in selector matches the last selector of FQN name of the type
 		selectorTokens := strings.Split(selector, ".")
 		typeStringTokens := strings.Split(typeString, ".")
 		if typeStringTokens[len(typeStringTokens)-1] == selectorTokens[len(selectorTokens)-1] {
@@ -96,51 +82,55 @@ func recognizeSafeAssignmentRhs(rhs ast.Expr, typeInfo *types.Info) bool {
 	return false
 }
 
-func recognizeConstantIfCondition(node ast.Node, typeInfo *types.Info) bool {
+func RecognizeConstantIfCondition(pkg *packages.Package, node ast.Node) bool {
 	ifStmt, ok := node.(*ast.IfStmt)
 	if !ok {
 		return false
 	}
-	return recognizeConstantFalse(ifStmt.Cond, typeInfo)
+	return RecognizeConstantFalse(pkg, ifStmt.Cond) || RecognizeConstantTrue(pkg, ifStmt.Cond)
 }
 
-func recognizeConstantFalse(node ast.Expr, typeInfo *types.Info) bool {
-	typeAndValue, ok := typeInfo.Types[node]
-	if ok && typeAndValue.Value != nil && typeAndValue.Value.ExactString() == "false" {
+func RecognizeConstantTrue(pkg *packages.Package, node ast.Expr) bool {
+	typeAndValue, ok := pkg.TypesInfo.Types[node]
+	if ok && typeAndValue.Value != nil && typeAndValue.Value.ExactString() == True {
 		return true
 	}
 	binExpr, ok := node.(*ast.BinaryExpr)
 	if !ok {
 		return false
 	}
-	return binExpr.Op == token.LAND && (recognizeConstantFalse(binExpr.X, typeInfo) || recognizeConstantFalse(binExpr.Y, typeInfo))
+	return binExpr.Op == token.LOR && (RecognizeConstantTrue(pkg, binExpr.X) || RecognizeConstantTrue(pkg, binExpr.Y))
 }
 
-func recognizePlatformDependentCode(node ast.Node) bool {
-	if ifStmt, ok := node.(*ast.IfStmt); ok {
-		return recognizePlatformDependentVarUsage(ifStmt.Cond)
+func RecognizeConstantFalse(pkg *packages.Package, node ast.Expr) bool {
+	typeAndValue, ok := pkg.TypesInfo.Types[node]
+	if ok && typeAndValue.Value != nil && typeAndValue.Value.ExactString() == False {
+		return true
 	}
-	if caseStmt, ok := node.(*ast.CaseClause); ok {
-		for _, expr := range caseStmt.List {
-			if recognizePlatformDependentVarUsage(expr) {
-				return true
-			}
-		}
+	binExpr, ok := node.(*ast.BinaryExpr)
+	if !ok {
+		return false
 	}
-	return false
+	return binExpr.Op == token.LAND && (RecognizeConstantFalse(pkg, binExpr.X) || RecognizeConstantFalse(pkg, binExpr.Y))
 }
 
-func recognizePlatformDependentVarUsage(node ast.Node) bool {
-	useGoos := false
+var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator")
+
+func RecognizePlatformDependentCode(node ast.Node) bool {
+	// ignore functions with platform dependent code inside
+	if _, ok := node.(*ast.FuncDecl); !ok {
+		return false
+	}
+	platformDependent := false
 	ast.Inspect(node, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		useGoos = useGoos || (ok && selector.Sel.Name == "GOOS")
+		selector, ok := DeconstructSelector(node)
+		platformDependent = platformDependent || (ok && PlatformDependentSelectors.Has(selector))
 		return true
 	})
-	return useGoos
+	return platformDependent
 }
 
-func recognizeMapClearPattern(node ast.Node) bool {
+func RecognizeMapClearPattern(node ast.Node) bool {
 	/*
 		recognize map clear intent with range loop which compiled to the single runtime.mapclear() call
 		for k := range m {
@@ -174,5 +164,5 @@ func recognizeMapClearPattern(node ast.Node) bool {
 		return false
 	}
 	first, second := call.Args[0], call.Args[1]
-	return equalExprs(rangeStmt.X, first) && equalExprs(rangeStmt.Key, second)
+	return EqualExprs(rangeStmt.X, first) && EqualExprs(rangeStmt.Key, second)
 }
