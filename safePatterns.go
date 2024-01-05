@@ -126,7 +126,7 @@ func RecognizeConstantFalse(pkg *packages.Package, node ast.Expr) bool {
 	return binExpr.Op == token.LAND && (RecognizeConstantFalse(pkg, binExpr.X) || RecognizeConstantFalse(pkg, binExpr.Y))
 }
 
-var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator", "filepath.ToSlash")
+var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator", "filepath.ToSlash", "filepath.FromSlash", "os.PathSeparator")
 
 func RecognizePlatformDependentCode(node ast.Node) bool {
 	// ignore functions with platform dependent code inside
