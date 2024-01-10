@@ -18,7 +18,7 @@ type VanishedInfo struct {
 type AnalysisPolicy interface {
 	ShouldSkip(pkg *packages.Package, node ast.Node) bool
 	IsControlFlowPivot(node ast.Node) bool
-	CheckComplexity(node ast.Node) bool
+	CheckComplexity(pkg *packages.Package, node ast.Node) bool
 	ReportVanished(info VanishedInfo)
 }
 
@@ -28,6 +28,9 @@ var Govanish AnalysisPolicy = GovanishAnalysisPolicy{}
 
 func (g GovanishAnalysisPolicy) ShouldSkip(pkg *packages.Package, node ast.Node) bool {
 	if funcDecl, ok := node.(*ast.FuncDecl); ok && IsGenericFunc(funcDecl) {
+		return true
+	}
+	if _, ok := node.(*ast.FuncLit); ok {
 		return true
 	}
 	return RecognizeMapClearPattern(node) ||
@@ -45,13 +48,18 @@ func (g GovanishAnalysisPolicy) IsControlFlowPivot(node ast.Node) bool {
 	return false
 }
 
-var SimpleBuiltins = NewSet("cap", "len", "complex", "imag", "real", "bool", "byte", "string", "complex128", "complex64", "float32", "float64", "int", "int16", "int32", "int64", "int8", "rune", "uint", "uint16", "uint32", "uint64", "uint8", "uintptr")
+var SimpleBuiltins = NewSet("make", "cap", "len", "complex", "imag", "real", "bool", "byte", "string", "complex128", "complex64", "float32", "float64", "int", "int16", "int32", "int64", "int8", "rune", "uint", "uint16", "uint32", "uint64", "uint8", "uintptr")
 
-func (g GovanishAnalysisPolicy) CheckComplexity(node ast.Node) bool {
+func (g GovanishAnalysisPolicy) CheckComplexity(pkg *packages.Package, node ast.Node) bool {
 	// compiler can optimize some statements to the sequence of CMOV commands in which case some lines can be removed from assembly info but they will be still there
 	complexFlow := false
 	operations := 0
 	ast.Inspect(node, func(node ast.Node) bool {
+		if expr, ok := node.(ast.Expr); ok {
+			if typeAndValue, ok := pkg.TypesInfo.Types[expr]; ok && typeAndValue.Value != nil {
+				return false
+			}
+		}
 		switch n := node.(type) {
 		case *ast.ReturnStmt, *ast.ForStmt, *ast.RangeStmt, *ast.DeferStmt:
 			complexFlow = true

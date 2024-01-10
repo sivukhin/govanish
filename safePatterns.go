@@ -66,18 +66,23 @@ func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	if parenExpr, ok := callExpr.Fun.(*ast.ParenExpr); ok {
-		// recognize cast of pointers
-		if _, ok := parenExpr.X.(*ast.StarExpr); ok {
-			return true
+	expr := callExpr.Fun
+	for {
+		parenExpr, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
 		}
-		return false
+		expr = parenExpr.X
 	}
-	selector, _ := DeconstructSelector(callExpr.Fun)
+	// recognize cast of pointers
+	if _, ok := expr.(*ast.StarExpr); ok {
+		return true
+	}
+	selector, _ := DeconstructSelector(expr)
 	if SimpleStructs.Has(selector) {
 		return true
 	}
-	exprTypeInfo := pkg.TypesInfo.Types[callExpr.Fun].Type
+	exprTypeInfo := pkg.TypesInfo.Types[expr].Type
 	if exprTypeInfo == nil {
 		return false
 	}

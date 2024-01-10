@@ -24,8 +24,11 @@ func main() {
 	}
 	log.Printf("module path: %v", analysisPath)
 	assemblyLines, err := AnalyzeModuleAssembly(analysisPath)
-	if err != nil {
+	if len(assemblyLines) == 0 && err != nil {
 		panic(fmt.Errorf("failed to analyze module assembly: %w", err))
+	}
+	if err != nil {
+		log.Printf("module analysis finished with non-critical error: %v", err)
 	}
 	err = AnalyzeModule(analysisPath, assemblyLines, Govanish)
 	if err != nil {

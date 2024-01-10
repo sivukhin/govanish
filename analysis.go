@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"go/ast"
-	"go/token"
 	"log"
 	"os/exec"
 	"slices"
@@ -82,13 +81,13 @@ func AnalyzeModuleAssembly(path string) (AssemblyLines, error) {
 	}
 	assemblyLines := ParseAssemblyOutput(path, bufio.NewScanner(stdout))
 	for err := range errs {
-		return nil, err
+		return assemblyLines, err
 	}
 	return assemblyLines, nil
 }
 
-func IsVanished(fset *token.FileSet, assemblyLines AssemblyLines, start, end ast.Node) bool {
-	startPosition, endPosition := fset.Position(start.Pos()), fset.Position(end.End())
+func IsVanished(pkg *packages.Package, assemblyLines AssemblyLines, start, end ast.Node) bool {
+	startPosition, endPosition := pkg.Fset.Position(start.Pos()), pkg.Fset.Position(end.End())
 	lines, ok := assemblyLines[startPosition.Filename]
 	if !ok {
 		return false
@@ -149,7 +148,7 @@ func AnalyzeModule(path string, assemblyLines AssemblyLines, policy AnalysisPoli
 					if previous+1 < i {
 						region := &ast.BlockStmt{List: blockStmt.List[previous+1 : i]}
 						start, end := blockStmt.List[previous+1], blockStmt.List[i-1]
-						if policy.CheckComplexity(region) && IsVanished(pkg.Fset, assemblyLines, start, end) {
+						if policy.CheckComplexity(pkg, region) && IsVanished(pkg, assemblyLines, start, end) {
 							policy.ReportVanished(VanishedInfo{
 								Pkg:      pkg,
 								FuncName: currentFunc,

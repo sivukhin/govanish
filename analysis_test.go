@@ -117,7 +117,9 @@ func (t *testPolicy) ShouldSkip(pkg *packages.Package, node ast.Node) bool {
 	return Govanish.ShouldSkip(pkg, node)
 }
 func (t *testPolicy) IsControlFlowPivot(node ast.Node) bool { return Govanish.IsControlFlowPivot(node) }
-func (t *testPolicy) CheckComplexity(node ast.Node) bool    { return Govanish.CheckComplexity(node) }
+func (t *testPolicy) CheckComplexity(pkg *packages.Package, node ast.Node) bool {
+	return Govanish.CheckComplexity(pkg, node)
+}
 func (t *testPolicy) ReportVanished(info VanishedInfo) {
 	t.Vanished = append(t.Vanished, simpleVanishedInfo{
 		Func:      info.FuncName,
@@ -133,15 +135,15 @@ type simpleVanishedInfo struct {
 }
 
 func analyze(t *testing.T, src string) []simpleVanishedInfo {
-	path, dispose, err := MustGenMod(src)
+	dir, dispose, err := MustGenMod(src)
 	require.Nil(t, err)
 	defer dispose()
 
-	assemblyLines, err := AnalyzeModuleAssembly(path)
+	assemblyLines, err := AnalyzeModuleAssembly(dir)
 	require.Nil(t, err)
 
 	policy := &testPolicy{}
-	require.Nil(t, AnalyzeModule(path, assemblyLines, policy))
+	require.Nil(t, AnalyzeModule(dir, assemblyLines, policy))
 	return policy.Vanished
 }
 
@@ -188,6 +190,22 @@ func TestAnalysis(t *testing.T) {
 		require.Empty(t, vanished)
 	})
 	t.Run("cast_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
+	t.Run("interface_cast.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
+	t.Run("func_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Empty(t, vanished)
+	})
+	t.Run("arithmetic_usage.go", func(t *testing.T) {
+		vanished := analyze(t, loadExample(t))
+		require.Equal(t, []simpleVanishedInfo{{Func: "ArithmeticUsage", StartLine: 7, EndLine: 7}}, vanished)
+	})
+	t.Run("const_expr.go", func(t *testing.T) {
 		vanished := analyze(t, loadExample(t))
 		require.Empty(t, vanished)
 	})
