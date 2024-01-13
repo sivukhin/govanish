@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -241,7 +240,6 @@ func recognizeDeterministicExpr(ctx GovanishContext, staticIdents map[string]str
 	ast.Inspect(expr, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.CallExpr:
-			fmt.Printf("n: %#v\n", n)
 			deterministic = false
 		case *ast.Ident:
 			selector, _ := DeconstructSelector(n)
