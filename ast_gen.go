@@ -8,6 +8,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+
+	"golang.org/x/tools/go/packages"
 )
 
 func MustGenExpr(expr string) (*token.FileSet, ast.Expr) {
@@ -51,18 +53,20 @@ func MustGenMod(src string) (string, func(), error) {
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
-func MustExtractLabeledStatement[T ast.Node](label string, nodes ...T) ast.Node {
-	var labeled ast.Node
-	for _, node := range nodes {
-		ast.Inspect(node, func(node ast.Node) bool {
-			if label, ok := node.(*ast.LabeledStmt); ok {
-				labeled = label.Stmt
-			}
-			return true
-		})
+func MustExtractFunc(pkgs []*packages.Package) *ast.FuncDecl {
+	var result *ast.FuncDecl
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Syntax {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if funcDecl, ok := node.(*ast.FuncDecl); ok && result == nil {
+					result = funcDecl
+				}
+				return true
+			})
+		}
 	}
-	if labeled == nil {
-		panic(fmt.Errorf("unable to find labeled statment '%v'", label))
+	if result == nil {
+		panic(fmt.Errorf("unable to find function"))
 	}
-	return labeled
+	return result
 }

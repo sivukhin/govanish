@@ -14,6 +14,22 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+type GovanishContext struct {
+	Pkg           *packages.Package
+	AssemblyLines AssemblyLines
+	FuncRegistry  FuncRegistry
+}
+
+func LoadPackage(dir string) ([]*packages.Package, error) {
+	cfg := &packages.Config{
+		Mode:  packages.NeedSyntax | packages.NeedFiles | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+		Tests: false,
+		Dir:   dir,
+	}
+
+	return packages.Load(cfg, "./...")
+}
+
 type AssemblyLines map[string][]int
 
 func (assemblyLines AssemblyLines) Normalize() {
@@ -99,32 +115,31 @@ func IsVanished(pkg *packages.Package, assemblyLines AssemblyLines, start, end a
 	return true
 }
 
-func AnalyzeModule(path string, assemblyLines AssemblyLines, policy AnalysisPolicy) error {
+func AnalyzeModuleAst(
+	project []*packages.Package,
+	assemblyLines AssemblyLines,
+	funcRegistry FuncRegistry,
+	policy AnalysisPolicy,
+) error {
 	log.Printf("ready to analyze module AST")
-	cfg := &packages.Config{
-		Mode:  packages.NeedSyntax | packages.NeedFiles | packages.NeedTypes | packages.NeedTypesInfo,
-		Tests: false,
-		Dir:   path,
-	}
-
-	project, err := packages.Load(cfg, "./...")
-	if err != nil {
-		return err
-	}
-
 	for _, pkg := range project {
 		for _, file := range pkg.Syntax {
 			if ast.IsGenerated(file) {
 				continue
 			}
+			ctx := GovanishContext{
+				Pkg:           pkg,
+				AssemblyLines: assemblyLines,
+				FuncRegistry:  funcRegistry,
+			}
 			var currentFunc string
-			ast.Inspect(file, func(node ast.Node) bool {
+			var analyze func(node ast.Node) bool
+			analyze = func(node ast.Node) bool {
 				if funcDecl, ok := node.(*ast.FuncDecl); ok {
 					currentFunc = funcDecl.Name.Name
 				}
-
 				// don't process whole subtree if we should skip the node
-				if policy.ShouldSkip(pkg, node) {
+				if policy.ShouldSkip(ctx, node) {
 					return false
 				}
 				// process subtree for control-flow pivot nodes but skip analysis of the node itself
@@ -137,18 +152,27 @@ func AnalyzeModule(path string, assemblyLines AssemblyLines, policy AnalysisPoli
 					return true
 				}
 				previous := -1
-				for i := 0; i <= len(blockStmt.List); i++ {
-					pivot := i == len(blockStmt.List) ||
-						policy.IsControlFlowPivot(blockStmt.List[i]) ||
-						policy.ShouldSkip(pkg, blockStmt.List[i])
+				i := 0
+				for i <= len(blockStmt.List) {
+					skip1 := i < len(blockStmt.List) && policy.ShouldSkip(ctx, blockStmt.List[i])
+					/*
+						- we want to also skip patterns like this:
+						value, err := F()
+						if err != nil {
+							...
+						}
+					*/
+					skip2 := i+1 < len(blockStmt.List) && policy.ShouldSkip(ctx, &ast.BlockStmt{List: blockStmt.List[i : i+2]})
+					pivot := i == len(blockStmt.List) || policy.IsControlFlowPivot(blockStmt.List[i]) || skip1 || skip2
 					// split sequence of statements by pivot positions and analyze regions between them
 					if !pivot {
+						i += 1
 						continue
 					}
 					if previous+1 < i {
 						region := &ast.BlockStmt{List: blockStmt.List[previous+1 : i]}
 						start, end := blockStmt.List[previous+1], blockStmt.List[i-1]
-						if policy.CheckComplexity(pkg, region) && IsVanished(pkg, assemblyLines, start, end) {
+						if policy.CheckComplexity(ctx, region) && IsVanished(pkg, assemblyLines, start, end) {
 							policy.ReportVanished(VanishedInfo{
 								Pkg:      pkg,
 								FuncName: currentFunc,
@@ -157,10 +181,26 @@ func AnalyzeModule(path string, assemblyLines AssemblyLines, policy AnalysisPoli
 							})
 						}
 					}
-					previous = i
+					for s := previous + 1; s < i; s++ {
+						ast.Inspect(blockStmt.List[s], analyze)
+					}
+					if skip1 {
+						previous = i
+						i += 1
+					} else if skip2 {
+						previous = i + 1
+						i += 2
+					} else {
+						if i < len(blockStmt.List) {
+							ast.Inspect(blockStmt.List[i], analyze)
+						}
+						previous = i
+						i += 1
+					}
 				}
-				return true
-			})
+				return false
+			}
+			ast.Inspect(file, analyze)
 		}
 	}
 	return nil

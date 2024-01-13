@@ -1,14 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
-
-	"golang.org/x/tools/go/packages"
 )
 
-func RecognizeSafeDeclaration(pkg *packages.Package, node ast.Node) bool {
+func RecognizeSafeDeclaration(ctx GovanishContext, node ast.Node) bool {
 	declStmt, ok := node.(*ast.DeclStmt)
 	if !ok {
 		return false
@@ -22,7 +21,7 @@ func RecognizeSafeDeclaration(pkg *packages.Package, node ast.Node) bool {
 	}
 	for _, spec := range genDecl.Specs {
 		for _, value := range spec.(*ast.ValueSpec).Values {
-			if !RecognizeSafeDeclarationRhs(pkg, value) {
+			if !RecognizeSafeDeclarationRhs(ctx, value) {
 				return false
 			}
 		}
@@ -30,16 +29,16 @@ func RecognizeSafeDeclaration(pkg *packages.Package, node ast.Node) bool {
 	return true
 }
 
-func RecognizeSafeAssignment(pkg *packages.Package, node ast.Node) bool {
+func RecognizeSafeAssignment(ctx GovanishContext, node ast.Node) bool {
 	assignStmt, ok := node.(*ast.AssignStmt)
 	if !ok {
 		return false
 	}
 	for _, rhs := range assignStmt.Rhs {
-		if assignStmt.Tok == token.DEFINE && !RecognizeSafeDeclarationRhs(pkg, rhs) {
+		if assignStmt.Tok == token.DEFINE && !RecognizeSafeDeclarationRhs(ctx, rhs) {
 			return false
 		}
-		if assignStmt.Tok != token.DEFINE && !RecognizeSafeAssignmentRhs(pkg, rhs) {
+		if assignStmt.Tok != token.DEFINE && !RecognizeSafeAssignmentRhs(ctx, rhs) {
 			return false
 		}
 	}
@@ -51,16 +50,16 @@ const (
 	True  = "true"
 )
 
-func RecognizeSafeDeclarationRhs(pkg *packages.Package, rhs ast.Expr) bool {
+func RecognizeSafeDeclarationRhs(ctx GovanishContext, rhs ast.Expr) bool {
 	if identExpr, ok := rhs.(*ast.Ident); ok {
 		return identExpr.Name == False || identExpr.Name == True
 	}
-	return RecognizeSafeAssignmentRhs(pkg, rhs)
+	return RecognizeSafeAssignmentRhs(ctx, rhs)
 }
 
 var SimpleStructs = NewSet("context.Background")
 
-func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
+func RecognizeSafeAssignmentRhs(ctx GovanishContext, rhs ast.Expr) bool {
 	// recognize type constructors (like a := T(b) where type T int64) or common structs with simple fields which efficiently inlined by compiler and legally vanished from assembly
 	callExpr, ok := rhs.(*ast.CallExpr)
 	if !ok {
@@ -82,7 +81,7 @@ func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
 	if SimpleStructs.Has(selector) {
 		return true
 	}
-	exprTypeInfo := pkg.TypesInfo.Types[expr].Type
+	exprTypeInfo := ctx.Pkg.TypesInfo.Types[expr].Type
 	if exprTypeInfo == nil {
 		return false
 	}
@@ -99,16 +98,16 @@ func RecognizeSafeAssignmentRhs(pkg *packages.Package, rhs ast.Expr) bool {
 	return false
 }
 
-func RecognizeConstantIfCondition(pkg *packages.Package, node ast.Node) bool {
+func RecognizeConstantIfCondition(ctx GovanishContext, node ast.Node) bool {
 	ifStmt, ok := node.(*ast.IfStmt)
 	if !ok {
 		return false
 	}
-	return RecognizeConstantFalse(pkg, ifStmt.Cond) || RecognizeConstantTrue(pkg, ifStmt.Cond)
+	return RecognizeConstantFalse(ctx, ifStmt.Cond) || RecognizeConstantTrue(ctx, ifStmt.Cond)
 }
 
-func RecognizeConstantTrue(pkg *packages.Package, node ast.Expr) bool {
-	typeAndValue, ok := pkg.TypesInfo.Types[node]
+func RecognizeConstantTrue(ctx GovanishContext, node ast.Expr) bool {
+	typeAndValue, ok := ctx.Pkg.TypesInfo.Types[node]
 	if ok && typeAndValue.Value != nil && typeAndValue.Value.ExactString() == True {
 		return true
 	}
@@ -116,11 +115,11 @@ func RecognizeConstantTrue(pkg *packages.Package, node ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	return binExpr.Op == token.LOR && (RecognizeConstantTrue(pkg, binExpr.X) || RecognizeConstantTrue(pkg, binExpr.Y))
+	return binExpr.Op == token.LOR && (RecognizeConstantTrue(ctx, binExpr.X) || RecognizeConstantTrue(ctx, binExpr.Y))
 }
 
-func RecognizeConstantFalse(pkg *packages.Package, node ast.Expr) bool {
-	typeAndValue, ok := pkg.TypesInfo.Types[node]
+func RecognizeConstantFalse(ctx GovanishContext, node ast.Expr) bool {
+	typeAndValue, ok := ctx.Pkg.TypesInfo.Types[node]
 	if ok && typeAndValue.Value != nil && typeAndValue.Value.ExactString() == False {
 		return true
 	}
@@ -128,7 +127,7 @@ func RecognizeConstantFalse(pkg *packages.Package, node ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	return binExpr.Op == token.LAND && (RecognizeConstantFalse(pkg, binExpr.X) || RecognizeConstantFalse(pkg, binExpr.Y))
+	return binExpr.Op == token.LAND && (RecognizeConstantFalse(ctx, binExpr.X) || RecognizeConstantFalse(ctx, binExpr.Y))
 }
 
 var PlatformDependentSelectors = NewSet("runtime.GOOS", "runtime.GOARCH", "filepath.Separator", "filepath.ToSlash", "filepath.FromSlash", "os.PathSeparator")
@@ -182,4 +181,79 @@ func RecognizeMapClearPattern(node ast.Node) bool {
 	}
 	first, second := call.Args[0], call.Args[1]
 	return EqualExprs(rangeStmt.X, first) && EqualExprs(rangeStmt.Key, second)
+}
+
+func RecognizeDeterministicIfCondition(ctx GovanishContext, node ast.Node) bool {
+	if ifStmt, ok := node.(*ast.IfStmt); ok && ifStmt.Init != nil {
+		return recognizeDeterministicIfCondition(ctx, ifStmt.Init, ifStmt.Cond)
+	}
+	if block, ok := node.(*ast.BlockStmt); ok && len(block.List) == 2 {
+		initStmt, okInit := block.List[0].(ast.Stmt)
+		ifStmt, okIf := block.List[1].(*ast.IfStmt)
+		if !okInit || !okIf {
+			return false
+		}
+		if ifStmt.Init == nil {
+			return recognizeDeterministicIfCondition(ctx, initStmt, ifStmt.Cond)
+		}
+	}
+	return false
+}
+
+func recognizeDeterministicIfCondition(ctx GovanishContext, init ast.Stmt, condition ast.Expr) bool {
+	assignStmt, ok := init.(*ast.AssignStmt)
+	if !ok {
+		return false
+	}
+	staticIdents := make(map[string]struct{})
+	if len(assignStmt.Rhs) == 1 && len(assignStmt.Lhs) > 1 && recognizeDeterministicCall(ctx, assignStmt.Rhs[0]) {
+		for _, lhs := range assignStmt.Lhs {
+			if selector, ok := DeconstructSelector(lhs); ok {
+				staticIdents[selector] = struct{}{}
+			}
+		}
+	} else {
+		for i, rhs := range assignStmt.Rhs {
+			lhs := assignStmt.Lhs[i]
+			if selector, ok := DeconstructSelector(lhs); ok && recognizeDeterministicCall(ctx, rhs) {
+				staticIdents[selector] = struct{}{}
+			}
+		}
+	}
+	return recognizeDeterministicExpr(ctx, staticIdents, condition)
+}
+
+func recognizeDeterministicCall(ctx GovanishContext, node ast.Node) bool {
+	callExpr, ok := node.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := DeconstructSelector(callExpr.Fun)
+	if !ok {
+		return false
+	}
+	tokens := strings.Split(selector, ".")
+	return ctx.FuncRegistry[tokens[len(tokens)-1]].DeterministicReturn
+}
+
+func recognizeDeterministicExpr(ctx GovanishContext, staticIdents map[string]struct{}, expr ast.Expr) bool {
+	deterministic := true
+	ast.Inspect(expr, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.CallExpr:
+			fmt.Printf("n: %#v\n", n)
+			deterministic = false
+		case *ast.Ident:
+			selector, _ := DeconstructSelector(n)
+			if _, ok := staticIdents[selector]; ok {
+				break
+			}
+			if typeAndValue, ok := ctx.Pkg.TypesInfo.Types[n]; ok && (typeAndValue.IsNil() || typeAndValue.Value != nil) {
+				break
+			}
+			deterministic = false
+		}
+		return true
+	})
+	return deterministic
 }

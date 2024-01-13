@@ -16,9 +16,9 @@ type VanishedInfo struct {
 }
 
 type AnalysisPolicy interface {
-	ShouldSkip(pkg *packages.Package, node ast.Node) bool
+	ShouldSkip(ctx GovanishContext, node ast.Node) bool
 	IsControlFlowPivot(node ast.Node) bool
-	CheckComplexity(pkg *packages.Package, node ast.Node) bool
+	CheckComplexity(ctx GovanishContext, node ast.Node) bool
 	ReportVanished(info VanishedInfo)
 }
 
@@ -26,7 +26,7 @@ type GovanishAnalysisPolicy struct{}
 
 var Govanish AnalysisPolicy = GovanishAnalysisPolicy{}
 
-func (g GovanishAnalysisPolicy) ShouldSkip(pkg *packages.Package, node ast.Node) bool {
+func (g GovanishAnalysisPolicy) ShouldSkip(ctx GovanishContext, node ast.Node) bool {
 	if funcDecl, ok := node.(*ast.FuncDecl); ok && IsGenericFunc(funcDecl) {
 		return true
 	}
@@ -34,10 +34,11 @@ func (g GovanishAnalysisPolicy) ShouldSkip(pkg *packages.Package, node ast.Node)
 		return true
 	}
 	return RecognizeMapClearPattern(node) ||
-		RecognizeConstantIfCondition(pkg, node) ||
-		RecognizeSafeAssignment(pkg, node) ||
-		RecognizeSafeDeclaration(pkg, node) ||
-		RecognizePlatformDependentCode(node)
+		RecognizeConstantIfCondition(ctx, node) ||
+		RecognizeSafeAssignment(ctx, node) ||
+		RecognizeSafeDeclaration(ctx, node) ||
+		RecognizePlatformDependentCode(node) ||
+		RecognizeDeterministicIfCondition(ctx, node)
 }
 
 func (g GovanishAnalysisPolicy) IsControlFlowPivot(node ast.Node) bool {
@@ -50,13 +51,13 @@ func (g GovanishAnalysisPolicy) IsControlFlowPivot(node ast.Node) bool {
 
 var SimpleBuiltins = NewSet("make", "cap", "len", "complex", "imag", "real", "bool", "byte", "string", "complex128", "complex64", "float32", "float64", "int", "int16", "int32", "int64", "int8", "rune", "uint", "uint16", "uint32", "uint64", "uint8", "uintptr")
 
-func (g GovanishAnalysisPolicy) CheckComplexity(pkg *packages.Package, node ast.Node) bool {
+func (g GovanishAnalysisPolicy) CheckComplexity(ctx GovanishContext, node ast.Node) bool {
 	// compiler can optimize some statements to the sequence of CMOV commands in which case some lines can be removed from assembly info but they will be still there
 	complexFlow := false
 	operations := 0
 	ast.Inspect(node, func(node ast.Node) bool {
 		if expr, ok := node.(ast.Expr); ok {
-			if typeAndValue, ok := pkg.TypesInfo.Types[expr]; ok && typeAndValue.Value != nil {
+			if typeAndValue, ok := ctx.Pkg.TypesInfo.Types[expr]; ok && (typeAndValue.IsNil() || typeAndValue.Value != nil) {
 				return false
 			}
 		}

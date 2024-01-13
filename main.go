@@ -30,7 +30,12 @@ func main() {
 	if err != nil {
 		log.Printf("module analysis finished with non-critical error: %v", err)
 	}
-	err = AnalyzeModule(analysisPath, assemblyLines, Govanish)
+	project, err := LoadPackage(analysisPath)
+	if err != nil {
+		panic(fmt.Errorf("unable to load project '%v': %w", analysisPath, err))
+	}
+	funcRegistry := CreateFuncRegistry(project)
+	err = AnalyzeModuleAst(project, assemblyLines, funcRegistry, Govanish)
 	if err != nil {
 		panic(fmt.Errorf("failed to analyze module AST: %w", err))
 	}

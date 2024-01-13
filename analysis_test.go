@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"go/ast"
 	"os"
 	"path"
@@ -9,12 +10,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/tools/go/packages"
 )
 
 func TestAnalyzeModuleAssembly(t *testing.T) {
 	t.Run("simple assembly", func(t *testing.T) {
-		path, dispose, err := MustGenMod(`
+		dir, dispose, err := MustGenMod(`
 package main
 import "fmt"
 type E struct{ Desc string }
@@ -39,7 +39,7 @@ func main() {}`)
 		require.Nil(t, err)
 		defer dispose()
 
-		assemblyLines, err := AnalyzeModuleAssembly(path)
+		assemblyLines, err := AnalyzeModuleAssembly(dir)
 		require.Nil(t, err)
 		t.Log(assemblyLines)
 		require.Len(t, assemblyLines, 1)
@@ -54,7 +54,7 @@ func main() {}`)
 		}, lines)
 	})
 	t.Run("instantiated generics", func(t *testing.T) {
-		path, dispose, err := MustGenMod(`
+		dir, dispose, err := MustGenMod(`
 package main
 import "fmt"
 
@@ -71,7 +71,7 @@ func main() {
 		require.Nil(t, err)
 		defer dispose()
 
-		assemblyLines, err := AnalyzeModuleAssembly(path)
+		assemblyLines, err := AnalyzeModuleAssembly(dir)
 		require.Nil(t, err)
 		require.Len(t, assemblyLines, 1)
 		var lines []int
@@ -81,7 +81,7 @@ func main() {
 		require.Equal(t, []int{7, 8, 9, 11, 12, 13, 14}, lines)
 	})
 	t.Run("not instantiated generics", func(t *testing.T) {
-		path, dispose, err := MustGenMod(`
+		dir, dispose, err := MustGenMod(`
 package main
 import "fmt"
 
@@ -98,7 +98,7 @@ func main() {
 		require.Nil(t, err)
 		defer dispose()
 
-		assemblyLines, err := AnalyzeModuleAssembly(path)
+		assemblyLines, err := AnalyzeModuleAssembly(dir)
 		require.Nil(t, err)
 		require.Len(t, assemblyLines, 1)
 		var lines []int
@@ -113,12 +113,12 @@ type testPolicy struct {
 	Vanished []simpleVanishedInfo
 }
 
-func (t *testPolicy) ShouldSkip(pkg *packages.Package, node ast.Node) bool {
-	return Govanish.ShouldSkip(pkg, node)
+func (t *testPolicy) ShouldSkip(ctx GovanishContext, node ast.Node) bool {
+	return Govanish.ShouldSkip(ctx, node)
 }
 func (t *testPolicy) IsControlFlowPivot(node ast.Node) bool { return Govanish.IsControlFlowPivot(node) }
-func (t *testPolicy) CheckComplexity(pkg *packages.Package, node ast.Node) bool {
-	return Govanish.CheckComplexity(pkg, node)
+func (t *testPolicy) CheckComplexity(ctx GovanishContext, node ast.Node) bool {
+	return Govanish.CheckComplexity(ctx, node)
 }
 func (t *testPolicy) ReportVanished(info VanishedInfo) {
 	t.Vanished = append(t.Vanished, simpleVanishedInfo{
@@ -143,7 +143,11 @@ func analyze(t *testing.T, src string) []simpleVanishedInfo {
 	require.Nil(t, err)
 
 	policy := &testPolicy{}
-	require.Nil(t, AnalyzeModule(dir, assemblyLines, policy))
+	project, err := LoadPackage(dir)
+	require.Nil(t, err)
+	funcRegistry := CreateFuncRegistry(project)
+	fmt.Printf("func: %#v\n", funcRegistry)
+	require.Nil(t, AnalyzeModuleAst(project, assemblyLines, funcRegistry, policy))
 	return policy.Vanished
 }
 
@@ -205,7 +209,7 @@ func TestAnalysis(t *testing.T) {
 		vanished := analyze(t, loadExample(t))
 		require.Equal(t, []simpleVanishedInfo{{Func: "ArithmeticUsage", StartLine: 7, EndLine: 7}}, vanished)
 	})
-	t.Run("const_expr.go", func(t *testing.T) {
+	t.Run("const_return_func.go", func(t *testing.T) {
 		vanished := analyze(t, loadExample(t))
 		require.Empty(t, vanished)
 	})
