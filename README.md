@@ -1,9 +1,13 @@
 # govanish
 
-## Installation
+`govanish` will highlight lines of code which most likely were removed by the compiler from the final executable binary.
+
+## Usage
 
 ```bash
-go install github.com/sivukhin/govanish@latest
+$> go install github.com/sivukhin/govanish@latest
+$> cd /path/to/your/module && govanish # go to your module and run govanish from root directory with go.mod file
+$> govanish /path/to/your/module       # or you can provide path to the root directory as first argument
 ```
 
 ## Purpose
