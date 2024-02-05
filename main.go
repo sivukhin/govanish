@@ -21,6 +21,8 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("unable to get working directory: %w", err))
 		}
+	} else {
+		panic(fmt.Errorf("usage: govanish | govanish [module path]"))
 	}
 	log.Printf("module path: %v", analysisPath)
 	assemblyLines, err := AnalyzeModuleAssembly(analysisPath)
