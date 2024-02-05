@@ -1,4 +1,4 @@
-module govanish
+module github.com/sivukhin/govanish
 
 go 1.21.0
 
