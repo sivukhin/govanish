@@ -1,4 +1,12 @@
-## govanish
+# govanish
+
+## Installation
+
+```bash
+go install github.com/sivukhin/govanish@latest
+```
+
+## Purpose
 
 It might not be a surprise to you that your code can simply disappear from the compiled binary for multiple reasons.
 
