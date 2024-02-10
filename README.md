@@ -6,8 +6,9 @@
 
 ```bash
 $> go install github.com/sivukhin/govanish@latest
-$> cd /path/to/your/module && govanish # go to your module and run govanish from root directory with go.mod file
-$> govanish /path/to/your/module       # or you can provide path to the root directory as first argument
+$> cd /path/to/your/module && govanish                # go to your module and run govanish from root directory with go.mod file
+$> govanish -path /path/to/your/module                # or you can provide path to the root directory as first argument
+$> govanish -path /path/to/your/module -format github # you can format errors in format for GitHub actions
 ```
 
 ## Purpose
@@ -58,7 +59,7 @@ The thing is, there are multiple subtle nuances in Go which can lead to the unwa
 
 ```shell
 $> govanish
-$> govanish projects/go/cache # projects/go/cache/ is a module root and has go.mod file
+$> govanish -path projects/go/cache # projects/go/cache/ is a module root and has go.mod file
 2024/01/04 19:59:19 module path: /home/sivukhin/projects/go/cache
 2024/01/04 19:59:19 ready to compile project at path '/home/sivukhin/projects/go/cache' for assembly inspection
 2024/01/04 19:59:19 ready to parse assembly output

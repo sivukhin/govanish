@@ -116,10 +116,12 @@ func IsVanished(pkg *packages.Package, assemblyLines AssemblyLines, start, end a
 }
 
 func AnalyzeModuleAst(
+	analysisPath string,
 	project []*packages.Package,
 	assemblyLines AssemblyLines,
 	funcRegistry FuncRegistry,
 	policy AnalysisPolicy,
+	reporting Reporting,
 ) error {
 	log.Printf("ready to analyze module AST")
 	for _, pkg := range project {
@@ -173,11 +175,12 @@ func AnalyzeModuleAst(
 						region := &ast.BlockStmt{List: blockStmt.List[previous+1 : i]}
 						start, end := blockStmt.List[previous+1], blockStmt.List[i-1]
 						if policy.CheckComplexity(ctx, region) && IsVanished(pkg, assemblyLines, start, end) {
-							policy.ReportVanished(VanishedInfo{
-								Pkg:      pkg,
-								FuncName: currentFunc,
-								Start:    start,
-								End:      end,
+							reporting.ReportVanished(VanishedInfo{
+								AnalysisPath: analysisPath,
+								Pkg:          pkg,
+								FuncName:     currentFunc,
+								Start:        start,
+								End:          end,
 							})
 						}
 					}

@@ -56,7 +56,7 @@ func RecognizeSafeDeclarationRhs(ctx GovanishContext, rhs ast.Expr) bool {
 	return RecognizeSafeAssignmentRhs(ctx, rhs)
 }
 
-var SimpleStructs = NewSet("context.Background")
+var SimpleStructs = NewSet("context.Background", "context.TODO")
 
 func RecognizeSafeAssignmentRhs(ctx GovanishContext, rhs ast.Expr) bool {
 	// recognize type constructors (like a := T(b) where type T int64) or common structs with simple fields which efficiently inlined by compiler and legally vanished from assembly

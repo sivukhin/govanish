@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -8,22 +9,39 @@ import (
 )
 
 func main() {
+	modulePath := flag.String("path", "", "path to the module root (with go.mod file)")
+	reportFormat := flag.String("format", "log", "reporting type (github | log)")
+	flag.Parse()
+
+	var reporting Reporting
+	if *reportFormat == "github" {
+		reporting = GitHubReporting{}
+	} else if *reportFormat == "log" {
+		reporting = LogReporting{}
+	} else {
+		fmt.Printf("invalid -format value: %v\n", *reportFormat)
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	var analysisPath string
-	if len(os.Args) == 2 {
-		var err error
-		analysisPath, err = filepath.Abs(os.Args[1])
-		if err != nil {
-			panic(fmt.Errorf("unable to expand path '%v' to absolute: %w", os.Args[1], err))
-		}
-	} else if len(os.Args) == 1 {
-		var err error
+	var err error
+	if *modulePath == "" {
 		analysisPath, err = os.Getwd()
 		if err != nil {
-			panic(fmt.Errorf("unable to get working directory: %w", err))
+			fmt.Printf("unable to get working directory: %v\n", err)
+			flag.Usage()
+			os.Exit(1)
 		}
 	} else {
-		panic(fmt.Errorf("usage: govanish | govanish [module path]"))
+		analysisPath, err = filepath.Abs(*modulePath)
+		if err != nil {
+			fmt.Printf("unable to expand path '%v' to absolute: %v\n", *modulePath, err)
+			flag.Usage()
+			os.Exit(1)
+		}
 	}
+
 	log.Printf("module path: %v", analysisPath)
 	assemblyLines, err := AnalyzeModuleAssembly(analysisPath)
 	if len(assemblyLines) == 0 && err != nil {
@@ -37,7 +55,8 @@ func main() {
 		panic(fmt.Errorf("unable to load project '%v': %w", analysisPath, err))
 	}
 	funcRegistry := CreateFuncRegistry(project)
-	err = AnalyzeModuleAst(project, assemblyLines, funcRegistry, Govanish)
+
+	err = AnalyzeModuleAst(analysisPath, project, assemblyLines, funcRegistry, Govanish, reporting)
 	if err != nil {
 		panic(fmt.Errorf("failed to analyze module AST: %w", err))
 	}
