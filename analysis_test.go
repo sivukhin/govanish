@@ -147,7 +147,7 @@ func analyze(t *testing.T, src string) []simpleVanishedInfo {
 	require.Nil(t, err)
 	funcRegistry := CreateFuncRegistry(project)
 	fmt.Printf("func: %#v\n", funcRegistry)
-	require.Nil(t, AnalyzeModuleAst(project, assemblyLines, funcRegistry, policy))
+	require.Nil(t, AnalyzeModuleAst("path", project, assemblyLines, funcRegistry, policy, policy))
 	return policy.Vanished
 }
 
