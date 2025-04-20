@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"go/ast"
+	"io"
 	"log"
 	"os/exec"
 	"slices"
@@ -76,6 +78,20 @@ func ParseAssemblyOutput(path string, scanner *bufio.Scanner) AssemblyLines {
 	return assemblyLines
 }
 
+type TruncateWriter struct {
+	writer io.Writer
+	limit  int
+}
+
+func (w *TruncateWriter) Write(buf []byte) (int, error) {
+	if w.limit == 0 {
+		return len(buf), nil
+	}
+	n, err := w.writer.Write(buf[0:min(w.limit, len(buf))])
+	w.limit -= n
+	return n, err
+}
+
 func AnalyzeModuleAssembly(path string) (AssemblyLines, error) {
 	log.Printf("ready to compile project at path '%v' for assembly inspection", path)
 	cmd := exec.Command("go", "build", "-C", path, "-gcflags", "-S", "./...")
@@ -91,13 +107,23 @@ func AnalyzeModuleAssembly(path string) (AssemblyLines, error) {
 			return
 		}
 	}()
-	stdout, err := cmd.StderrPipe()
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, err
 	}
-	assemblyLines := ParseAssemblyOutput(path, bufio.NewScanner(stdout))
+	stderrHead := bytes.NewBuffer(nil)
+	stderrTee := io.TeeReader(stderr, &TruncateWriter{writer: stderrHead, limit: 1024})
+	assemblyLines := ParseAssemblyOutput(path, bufio.NewScanner(stderrTee))
 	for err := range errs {
-		return assemblyLines, err
+		if len(assemblyLines) == 0 {
+			return nil, fmt.Errorf(
+				`go build failed: err=%w, cmd="go build -C %v -gcflags -S ./...", stderr=%v`,
+				err,
+				path,
+				strings.TrimSpace(stderrHead.String()),
+			)
+		}
+		return assemblyLines, fmt.Errorf(`go build finished with non zero exit code: err=%w`, err)
 	}
 	return assemblyLines, nil
 }
